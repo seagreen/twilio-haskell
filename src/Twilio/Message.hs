@@ -18,6 +18,7 @@ import Control.Monad (mzero)
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson
+import Data.Aeson.Types (parseMaybe)
 import Data.Time.Clock (UTCTime)
 import Network.URI (URI, parseRelativeReference)
 
@@ -27,7 +28,7 @@ data Message = Message
   { sid         :: !MessageSID
   , dateCreated :: !UTCTime
   , dateUpdated :: !UTCTime
-  , dateSent    :: !UTCTime
+  , dateSent    :: !(Maybe UTCTime) -- TODO: this causes parsing problems
   , accountSID  :: !AccountSID
   , to          :: !String
   , from        :: !String
@@ -46,7 +47,7 @@ instance FromJSON Message where
     <$>  v .: "sid"
     <*> (v .: "date_created" >>= parseDateTime)
     <*> (v .: "date_updated" >>= parseDateTime)
-    <*> (v .: "date_sent"    >>= parseDateTime)
+    <*> (v .: "date_sent"    >>= parseMaybeDateTime)
     <*>  v .: "account_sid"
     <*>  v .: "to"
     <*>  v .: "from"
@@ -61,6 +62,11 @@ instance FromJSON Message where
     <*>  v .: "api_version"
     <*> (v .: "uri"          <&> parseRelativeReference
                              >>= maybeReturn)
+  where
+    parseMaybeDateTime :: a -> Parser (Maybe UTCTime)
+    parseMaybeDateTime (String a) = parseDateTime a
+    parseMaybeDateTime _ -> return Nothing
+
   parseJSON _ = mzero
 
 -- | Get a 'Message' by 'MessageSID'.

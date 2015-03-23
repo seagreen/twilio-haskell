@@ -22,6 +22,7 @@ module Twilio.Types
   , forAccount
   , request
   , requestForAccount
+  , postForAccount
     -- * Twilio Exceptions
   , TwilioException(..)
     -- * Credentials
@@ -80,6 +81,7 @@ import Control.Monad.Reader.Class (MonadReader(ask, local))
 import Control.Monad.Trans.Class (MonadTrans(lift))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
+import qualified Data.ByteString as SBS -- TODO: what abbreviation to use?
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isLower, isNumber)
@@ -93,7 +95,7 @@ import Data.Time.Format (parseTime)
 import Data.Typeable (Typeable)
 import Debug.Trace (trace)
 import Network.HTTP.Client (applyBasicAuth, brConsume, newManager, parseUrl,
-  responseBody, withResponse)
+  responseBody, urlEncodedBody, withResponse)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.URI (URI, parseRelativeReference)
 import System.Locale (defaultTimeLocale)
@@ -256,6 +258,23 @@ request resourceURL = do
     putStrLn . C.unpack $ LBS.toStrict bs
     return . fromJust $ decode bs
 
+postRequest :: (MonadIO m, FromJSON a)
+            => String
+            -> [(SBS.ByteString, SBS.ByteString)]
+            -> TwilioT m a
+postRequest resourceURL params = do
+  manager <- liftIO (newManager tlsManagerSettings)
+  ((accountSID, authToken), _) <- ask
+  let request = fromJust $ do
+      req <- parseUrl (baseURL ++ resourceURL)
+      return $ applyBasicAuth (C.pack $ getSID accountSID)
+                              (C.pack $ getAuthToken authToken)
+             $ urlEncodedBody params req
+  liftIO $ withResponse request manager $ \response -> do
+    bs <- LBS.fromChunks <$> brConsume (responseBody response)
+    putStrLn . C.unpack $ LBS.toStrict bs
+    return . fromJust $ decode bs
+
 -- | Given a relative resource URL, make an authenticated GET request to
 -- Twilio for the specified account.
 -- /You should never need to use this function directly./
@@ -263,6 +282,17 @@ requestForAccount :: (MonadIO m, FromJSON a) => String -> TwilioT m a
 requestForAccount resourceURL = do
   (_, subAccountSID) <- ask
   request ("/Accounts/" ++ getSID subAccountSID ++ resourceURL)
+
+-- | Given a relative resource URL, make an authenticated POST request to
+-- Twilio for the specified account.
+-- /You should never need to use this function directly./
+postForAccount :: (MonadIO m, FromJSON a)
+               => String
+               -> [(SBS.ByteString, SBS.ByteString)]
+               -> TwilioT m a
+postForAccount resourceURL params = do
+  (_, subAccountSID) <- ask
+  postRequest ("/Accounts/" ++ getSID subAccountSID ++ resourceURL) params
 
 {- Credentials -}
 
@@ -524,6 +554,10 @@ parseDateTime s =
   case parseTime defaultTimeLocale "%a, %d %b %Y %T %z" s of
     Just dateTime -> return dateTime
     Nothing       -> mzero
+
+parseMaybeDateTime :: Value -> Parser (Maybe UTCTime)
+parseMaybeDateTime (String a) = parseDateTime a
+parseMaybeDateTime _ -> return Nothing
 
 safeRead :: (Monad m, MonadPlus m, Read a) => String -> m a
 safeRead s = case reads s of
